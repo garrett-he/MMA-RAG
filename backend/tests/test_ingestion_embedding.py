@@ -111,10 +111,11 @@ async def test_transient_http_failure_retries_same_model(category, status):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(('category', 'status'), [
-    ('authentication', 401), ('billing', 402), ('access_denied', 403), ('content_policy', 400), ('request_error', 400),
+@pytest.mark.parametrize(('category', 'status', 'status_retryable'), [
+    ('authentication', 401, True), ('billing', 402, True), ('access_denied', 403, True),
+    ('content_policy', 400, False), ('request_error', 400, False),
 ])
-async def test_permanent_failure_does_not_retry_or_split_and_preserves_evidence(category, status):
+async def test_permanent_failure_does_not_retry_or_split_and_preserves_evidence(category, status, status_retryable):
     instance = manager()
     instance.embed.side_effect = None
     instance.embed.return_value = LLMCallResult(False, error='blocked', error_category=category, status_code=status,
@@ -125,7 +126,9 @@ async def test_permanent_failure_does_not_retry_or_split_and_preserves_evidence(
     fields = error.value.status_fields()
     assert fields['failed_stage'] == 'dense_embedding'
     assert fields['provider_request_id'] == 'req-1' and fields['provider_code'] == 'blocked-code'
-    assert fields['retryable'] is False and fields['error_category'] == category
+    # Account refusals stay manually retryable after the user fixes the account;
+    # content policy and request errors do not. Neither retries within the run.
+    assert fields['retryable'] is status_retryable and fields['error_category'] == category
 
 
 @pytest.mark.asyncio
@@ -294,7 +297,7 @@ async def test_first_batch_failure_cancels_sibling_and_does_not_start_more_batch
     assert sibling_cancelled.is_set()
     assert [call.kwargs['texts'] for call in instance.embed.await_args_list] == [['bad'], ['sibling']]
     assert error.value.provider_request_id == 'req-auth'
-    assert error.value.provider_code == 'auth' and error.value.retryable is False
+    assert error.value.provider_code == 'auth' and error.value.retryable is True
 
 
 @pytest.mark.asyncio

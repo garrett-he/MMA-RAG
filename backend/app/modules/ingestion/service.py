@@ -4588,6 +4588,10 @@ class IngestionService:
         status = self._load_persisted_processing_status(processing_id, raise_on_error=True) or self._processing_status.get(processing_id)
         if not isinstance(status, dict):
             raise LookupError("未找到上传任务或任务状态已过期")
+        # Enrichment reclassifies saved account-refusal failures (billing or
+        # authentication) as retryable, so a fixed provider account can resume
+        # from the stored checkpoints instead of forcing a re-upload.
+        status = retry_capabilities(status)
         file_type = str(status.get("file_type") or "")
         if file_type not in DOCUMENT_TYPES | {"video"}:
             raise ValueError("仅支持重新处理已保存的文档或视频任务")

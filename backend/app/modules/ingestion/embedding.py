@@ -164,8 +164,12 @@ def _failure(result: LLMCallResult, model: str, start: int, count: int) -> Inges
     timeout = "timeout" in str(result.error or "").lower()
     code = "dense_embedding_timeout" if timeout else "dense_embedding_unavailable" if _transient(result) else "dense_embedding_failed"
     message = "文本向量化请求超时，原文件和已完成批次已保留，可稍后重新处理。" if timeout else "文本向量化未完成，原文件和已完成批次已保留。"
+    # Account refusals (authentication/billing/access_denied) are not transient
+    # for this run, but the saved file stays manually retryable once the user
+    # fixes the account; content_policy re-runs the same refusal instead.
+    user_fixable = result.error_category in {"authentication", "billing", "access_denied"}
     return IngestionEmbeddingError(message, error_code=code, result=result, model_used=model,
-                                   retryable=_transient(result), batch_start=start, batch_count=count)
+                                   retryable=_transient(result) or user_fixable, batch_start=start, batch_count=count)
 
 
 async def embed_ingestion_texts(

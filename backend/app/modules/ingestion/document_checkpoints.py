@@ -52,6 +52,11 @@ def retry_capabilities(status: dict) -> dict:
         result["storage_persisted"] = True
     if supported and status.get("status") == "failed" and status.get("retryable") is None:
         result["retryable"] = status.get("error_code") != "content_policy"
+    if (supported and result.get("retryable") is False
+            and status.get("error_category") in {"authentication", "billing", "access_denied"}):
+        # Older rows classified account refusals as permanently non-retryable;
+        # the saved original is recoverable once the user fixes the account.
+        result["retryable"] = True
     if status.get("status") == "failed" and "ReadTimeout" in str(status.get("error") or "") and "密集向量化" in str(status.get("error") or ""):
         result.setdefault("failed_stage", "dense_embedding")
         result.setdefault("error_code", "dense_embedding_timeout")

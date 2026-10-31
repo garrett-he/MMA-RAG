@@ -68,6 +68,30 @@ def test_old_failure_is_retryable_but_unsaved_deleted_and_refused_are_not():
     assert retry_capabilities({**status, "retryable": False})["retryable"] is False
 
 
+def test_account_refusal_failure_becomes_retryable_after_user_fixes_account():
+    status = dict(file_type="md", file_id="f", bucket="kb", object_path="documents/f.md", status="failed",
+                  error_code="dense_embedding_failed", error_category="billing", status_code=402,
+                  retryable=False, storage_persisted=True)
+    # Older rows persisted account refusals as non-retryable; the saved
+    # original is recoverable once the user fixes the provider account.
+    assert retry_capabilities(status)["retryable"] is True
+    for patch in ({"error_category": "content_policy"}, {"error_category": None}, {"file_id": None}):
+        assert retry_capabilities({**status, **patch})["retryable"] is False
+
+
+def test_document_retry_accepts_persisted_billing_failure():
+    async def run():
+        owner = service(TransactionRedis())
+        state = {**seed(owner), "file_type": "md", "error_code": "dense_embedding_failed",
+                 "error_category": "billing", "status_code": 402, "retryable": False}
+        owner._persist_processing_status(state)
+        owner._reprocess_persisted_document = AsyncMock(return_value={"file_id": "file"})
+        receipt = owner.retry_file_processing("task")
+        assert receipt["file_id"] == "file" and receipt["storage_persisted"] is True
+        await owner._background_upload_tasks["task"]
+    asyncio.run(run())
+
+
 def test_document_dense_failure_resumes_chunks_without_reparse_or_duplicate_images(monkeypatch):
     from app.core import portrait_trigger
     monkeypatch.setattr(portrait_trigger, "trigger_portrait_rebuild", Mock())
