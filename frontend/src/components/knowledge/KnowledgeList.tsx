@@ -3,7 +3,7 @@ import { translate as t, useTranslation, getLanguage } from '@/i18n'
 import React, { Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Plus, Upload, Search, Trash2, FileText, Image as ImageIcon, X, Pencil, Link2, ImagePlus, Loader2, FolderOpen, Layers, Zap, Newspaper, Play, Music, Video, Eye, LayoutGrid, List, ChevronDown, ChevronRight, AlertCircle, RotateCcw } from 'lucide-react'
+import { Plus, Upload, Search, Trash2, FileText, Image as ImageIcon, X, Pencil, Link2, ImagePlus, Loader2, FolderOpen, Layers, Zap, Newspaper, Play, Music, Video, Eye, LayoutGrid, List, ChevronDown, ChevronRight, AlertCircle, RotateCcw, Download } from 'lucide-react'
 import { UploadPipeline, type UploadPipelineProgress, type UploadFileProgress } from './UploadPipeline'
 import { UploadSourceGlyph } from './UploadSourceGlyph'
 import { KnowledgeLibraryHeader } from './KnowledgeLibraryHeader'
@@ -460,6 +460,8 @@ function FilePreviewModal({
   const [excelError, setExcelError] = React.useState<string | null>(null)
   const [retryingFile, setRetryingFile] = React.useState(false)
   const [retryFileError, setRetryFileError] = React.useState<string | null>(null)
+  const [savingFile, setSavingFile] = React.useState(false)
+  const [saveFileError, setSaveFileError] = React.useState<string | null>(null)
   const [previewOwner, setPreviewOwner] = React.useState<string | null>(null)
   const retryPendingRef = React.useRef(false)
   const previewContentRef = React.useRef<HTMLDivElement>(null)
@@ -531,6 +533,8 @@ function FilePreviewModal({
     setVideoLoading(Boolean(kbId && isVideo))
     setRetryFileError(null)
     setRetryingFile(false)
+    setSaveFileError(null)
+    setSavingFile(false)
   }
   const canRetryFile = String(file.status || '').toLowerCase() === 'failed'
     && (isVideo ? canRetryVideoFromPreview(file) : canRetryDocumentUpload(file))
@@ -566,6 +570,45 @@ function FilePreviewModal({
         retryPendingRef.current = false
         setRetryingFile(false)
       }
+    }
+  }
+
+  const handleSaveFile = async () => {
+    if (!kbId || !file?.id || savingFile) return
+    setSavingFile(true)
+    setSaveFileError(null)
+    // Office 文档在页内预览时已被服务端转为 PDF 字节；保存时如实使用 .pdf
+    // 扩展名，其余类型一律使用原始文件名并保存原始字节。
+    const saveName = isOfficeDocument
+      ? file.name.replace(/\.(pptx|docx)$/i, '.pdf')
+      : file.name
+    try {
+      // 复用预览已拉取的原始字节（PDF/音频/视频/表格），避免重复下载。
+      // 预览自己的 object URL 由其 effect 生命周期管理，这里只清理新建的。
+      let href = pdfObjectUrl || audioObjectUrl || videoObjectUrl
+      let createdUrl: string | null = null
+      if (!href && excelBlob) {
+        createdUrl = URL.createObjectURL(excelBlob)
+        href = createdUrl
+      }
+      if (!href) {
+        const blob = isImg && file.previewUrl
+          ? await (await fetch(file.previewUrl)).blob()
+          : await knowledgeApi.getFileStream(kbId, file.id, { timeoutMs: 60000 })
+        createdUrl = URL.createObjectURL(blob)
+        href = createdUrl
+      }
+      const anchor = document.createElement('a')
+      anchor.href = href
+      anchor.download = saveName
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      if (createdUrl) window.setTimeout(() => URL.revokeObjectURL(createdUrl as string), 10_000)
+    } catch (error) {
+      setSaveFileError(getErrorMessage(error, t('保存文件失败')))
+    } finally {
+      setSavingFile(false)
     }
   }
 
@@ -1231,6 +1274,35 @@ function FilePreviewModal({
               <Pencil className="h-4 w-4 shrink-0 opacity-90" strokeWidth={2.25} aria-hidden />
               {loadingRawText ? t("加载内容中…") : t("编辑内容")}
             </button>
+          )}
+          {file.id && kbId && !isUploadSourceUnavailable(file) && (
+            <div className="min-w-0">
+              <button
+                onClick={() => { void handleSaveFile() }}
+                disabled={savingFile}
+                aria-label={t("保存文件：{{value1}}", { value1: file.name })}
+                className={cn(
+                  'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold',
+                  'border border-slate-200/90 bg-white text-slate-700 shadow-sm shadow-slate-100/40',
+                  'dark:border-slate-700/60 dark:bg-slate-900 dark:text-slate-200 dark:shadow-none',
+                  'hover:bg-slate-700 hover:border-slate-700 hover:text-white hover:shadow-md hover:shadow-slate-500/20',
+                  'dark:hover:bg-slate-700 dark:hover:border-slate-600 dark:hover:text-white',
+                  'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-white disabled:hover:text-slate-700',
+                  'dark:disabled:hover:bg-slate-900 dark:disabled:hover:text-slate-200',
+                  'active:scale-[0.98] transition-all duration-200 ease-out',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50 dark:focus-visible:ring-offset-slate-900'
+                )}
+                type="button"
+              >
+                <Download className={cn('h-4 w-4 shrink-0 opacity-90', savingFile && 'animate-pulse')} strokeWidth={2.25} aria-hidden />
+                {savingFile ? t("保存中…") : t("保存本地")}
+              </button>
+              {saveFileError ? (
+                <p className="mt-1.5 max-w-xs text-xs leading-relaxed text-red-600 dark:text-red-400" role="alert">
+                  {saveFileError}
+                </p>
+              ) : null}
+            </div>
           )}
           <button
             onClick={onDelete}
